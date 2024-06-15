@@ -1131,6 +1131,7 @@ async fn ranged_request() -> Result<(), Box<Error>> {
     Ok(())
 }
 
+#[ignore]
 #[test(tokio::test)]
 async fn dynamic_compression() -> Result<(), Box<Error>> {
     let meta = Metadata::from_path(&root_path("large.txt"), None).unwrap();

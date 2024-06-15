@@ -356,6 +356,7 @@ mod tests {
     async fn host_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/", Some("example.com")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Handled
@@ -367,6 +368,7 @@ mod tests {
     async fn host_alias_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(false);
         let mut session = make_session("/", Some("[::1]:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::ResponseSent
@@ -378,6 +380,7 @@ mod tests {
     async fn uri_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(false);
         let mut session = make_session("https://example.com/", None).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Handled
@@ -389,6 +392,7 @@ mod tests {
     async fn uri_alias_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(false);
         let mut session = make_session("http://[::1]:8080/", None).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::ResponseSent
@@ -400,6 +404,7 @@ mod tests {
     async fn host_precedence() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(false);
         let mut session = make_session("https://localhost:8080/", Some("example.com")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Handled
@@ -411,6 +416,7 @@ mod tests {
     async fn default_fallback() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/", Some("example.net")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::ResponseSent
@@ -422,6 +428,7 @@ mod tests {
     async fn no_default_fallback() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(false);
         let mut session = make_session("/", Some("example.net")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Unhandled
@@ -433,6 +440,7 @@ mod tests {
     async fn subdir_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/subdir/", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Unhandled
@@ -446,6 +454,7 @@ mod tests {
     async fn subdir_match_without_slash() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/subdir", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Unhandled
@@ -459,6 +468,7 @@ mod tests {
     async fn subdir_match_with_suffix() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/subdir/xyz?abc", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Unhandled
@@ -475,6 +485,7 @@ mod tests {
     async fn subdir_match_extra_slashes() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("//subdir///xyz//", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Unhandled
@@ -491,6 +502,7 @@ mod tests {
     async fn subdir_no_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/subdir_xyz", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::ResponseSent
@@ -504,6 +516,7 @@ mod tests {
     async fn subdir_longer_match() -> Result<(), Box<Error>> {
         let (handler, mut ctx) = handler(true);
         let mut session = make_session("/subdir/subsub/xyz", Some("localhost:8080")).await;
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler.request_filter(&mut session, &mut ctx).await?,
             RequestFilterResult::Handled
