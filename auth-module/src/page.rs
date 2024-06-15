@@ -115,10 +115,14 @@ async fn login_response(
     header.append_header(header::CONTENT_LENGTH, text.len().to_string())?;
     header.append_header(header::CONTENT_TYPE, "text/html")?;
     header.append_header(header::CACHE_CONTROL, "no-store")?;
-    session.write_response_header(Box::new(header)).await?;
 
-    if session.req_header().method != Method::HEAD {
-        session.write_response_body(text.into()).await?;
+    let is_head = session.req_header().method == Method::HEAD;
+    session
+        .write_response_header(Box::new(header), is_head)
+        .await?;
+
+    if !is_head {
+        session.write_response_body(Some(text.into()), true).await?;
     }
 
     Ok(RequestFilterResult::ResponseSent)

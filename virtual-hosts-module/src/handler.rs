@@ -121,11 +121,11 @@ where
         }
     }
 
-    async fn request_filter(
+    async fn early_request_filter(
         &self,
         session: &mut impl SessionWrapper,
         ctx: &mut Self::CTX,
-    ) -> Result<RequestFilterResult, Box<Error>> {
+    ) -> Result<(), Box<Error>> {
         let path = session.req_header().uri.path();
         let handler = session
             .host()
@@ -147,11 +147,6 @@ where
         if let Some((handler, index, new_path)) = handler {
             ctx.index = Some(index);
 
-            // Save ctx.index in session as well, response_filter could be called without context
-            session
-                .extensions_mut()
-                .insert::<IndexEntry>((index, PhantomData::<Marker>));
-
             if let Some(new_path) = new_path {
                 // Capture original URI, logging might need it
                 let orig_uri = session.req_header().uri.clone();
@@ -160,6 +155,27 @@ where
                 let header = session.req_header_mut();
                 header.set_uri(set_uri_path(&header.uri, &new_path));
             }
+
+            handler.early_request_filter(session, ctx).await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn request_filter(
+        &self,
+        session: &mut impl SessionWrapper,
+        ctx: &mut Self::CTX,
+    ) -> Result<RequestFilterResult, Box<Error>> {
+        if let Some(index) = ctx.index {
+            // Save ctx.index in session as well, response_filter could be called without context
+            session
+                .extensions_mut()
+                .insert::<IndexEntry>((index, PhantomData::<Marker>));
+
+        }
+
+        if let Some(handler) = self.as_inner(ctx) {
             handler.request_filter(session, ctx).await
         } else {
             Ok(RequestFilterResult::Unhandled)

@@ -100,6 +100,17 @@ fn generate_request_filter_impl(
                     }
                 }
 
+                async fn early_request_filter(
+                    &self,
+                    _session: &mut impl ::module_utils::pingora::SessionWrapper,
+                    _ctx: &mut Self::CTX,
+                ) -> ::std::result::Result<(), ::std::boxed::Box<::module_utils::pingora::Error>> {
+                    #(
+                        self.#field_name.early_request_filter(_session, &mut _ctx.#field_name).await?;
+                    )*
+                    ::std::result::Result::Ok(())
+                }
+
                 async fn request_filter(
                     &self,
                     _session: &mut impl ::module_utils::pingora::SessionWrapper,

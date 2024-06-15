@@ -71,8 +71,9 @@
 //! For more comprehensive examples see the `examples` directory in the repository.
 
 use async_trait::async_trait;
-use module_utils::pingora::{Error, SessionWrapper};
-use module_utils::{DeserializeMap, RequestFilter, RequestFilterResult};
+use log::error;
+use module_utils::pingora::{Error, ResponseCompression, SessionWrapper};
+use module_utils::{DeserializeMap, RequestFilter};
 use structopt::StructOpt;
 
 /// Command line options of the compression module
@@ -131,20 +132,27 @@ impl RequestFilter for CompressionHandler {
     type CTX = ();
     fn new_ctx() -> Self::CTX {}
 
-    async fn request_filter(
+    async fn early_request_filter(
         &self,
         session: &mut impl SessionWrapper,
         _ctx: &mut Self::CTX,
-    ) -> Result<RequestFilterResult, Box<Error>> {
+    ) -> Result<(), Box<Error>> {
         if let Some(level) = self.conf.compression_level {
-            session.downstream_compression.adjust_level(level);
+            if let Some(downstream_compression) = session
+                .downstream_modules_ctx
+                .get_mut::<ResponseCompression>()
+            {
+                downstream_compression.adjust_level(level);
+            } else {
+                error!("Failed configuring downstream compression, module not found");
+            }
         }
 
         if self.conf.decompress_upstream {
             session.upstream_compression.adjust_decompression(true);
         }
 
-        Ok(RequestFilterResult::Unhandled)
+        Ok(())
     }
 }
 
@@ -153,7 +161,7 @@ mod tests {
     use super::*;
 
     use module_utils::pingora::{RequestHeader, TestSession};
-    use module_utils::FromYaml;
+    use module_utils::{FromYaml, RequestFilterResult};
     use test_log::test;
 
     #[derive(Debug, DeserializeMap, Default)]
@@ -181,11 +189,13 @@ mod tests {
             session: &mut impl SessionWrapper,
             _ctx: &mut Self::CTX,
         ) -> Result<RequestFilterResult, Box<Error>> {
-            if session.downstream_compression.is_enabled()
-                && session.upstream_compression.is_enabled()
-            {
+            let downstream_compression = session
+                .downstream_modules_ctx
+                .get::<ResponseCompression>()
+                .unwrap();
+            if downstream_compression.is_enabled() && session.upstream_compression.is_enabled() {
                 Ok(RequestFilterResult::ResponseSent)
-            } else if session.downstream_compression.is_enabled()
+            } else if downstream_compression.is_enabled()
                 || session.upstream_compression.is_enabled()
             {
                 Ok(RequestFilterResult::Handled)
@@ -225,9 +235,11 @@ mod tests {
     async fn unconfigured() -> Result<(), Box<Error>> {
         let handler = make_handler(false);
         let mut session = make_session().await;
+        let mut ctx = Handler::new_ctx();
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler
-                .request_filter(&mut session, &mut Handler::new_ctx())
+                .request_filter(&mut session, &mut ctx)
                 .await?,
             RequestFilterResult::Unhandled
         );
@@ -238,9 +250,11 @@ mod tests {
     async fn configured() -> Result<(), Box<Error>> {
         let handler = make_handler(true);
         let mut session = make_session().await;
+        let mut ctx = Handler::new_ctx();
+        handler.early_request_filter(&mut session, &mut ctx).await?;
         assert_eq!(
             handler
-                .request_filter(&mut session, &mut Handler::new_ctx())
+                .request_filter(&mut session, &mut ctx)
                 .await?,
             RequestFilterResult::ResponseSent
         );

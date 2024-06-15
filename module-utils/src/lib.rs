@@ -75,6 +75,21 @@ pub trait RequestFilter: Sized {
         conf.try_into()
     }
 
+    /// Handles the `early_request_filter` phase of the current request.
+    ///
+    /// This will wrap the current session and call `early_request` method of the handler then.
+    async fn call_early_request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<(), Box<Error>>
+    where
+        Self::CTX: Send,
+    {
+        let mut session = wrap_session(session, self);
+        self.early_request_filter(&mut session, ctx).await
+    }
+
     /// Handles the `request_filter` phase of the current request.
     ///
     /// This will wrap the current session and call `request_filter` and `request_filter_done`
@@ -148,14 +163,26 @@ pub trait RequestFilter: Sized {
     /// Creates a new state object, see [`pingora_proxy::ProxyHttp::new_ctx`]
     fn new_ctx() -> Self::CTX;
 
-    /// Handler to run during Pingora’s `request_filter` pharse, see
+    /// Handler to run during Pingora’s `early_request_filter` phase, called before any downstream
+    /// modules.
+    async fn early_request_filter(
+        &self,
+        _session: &mut impl SessionWrapper,
+        _ctx: &mut Self::CTX,
+    ) -> Result<(), Box<Error>> {
+        Ok(())
+    }
+
+    /// Handler to run during Pingora’s `request_filter` phase, see
     /// [`pingora_proxy::ProxyHttp::request_filter`]. This uses a different return type to account
     /// for the existence of multiple chained handlers.
     async fn request_filter(
         &self,
-        session: &mut impl SessionWrapper,
-        ctx: &mut Self::CTX,
-    ) -> Result<RequestFilterResult, Box<Error>>;
+        _session: &mut impl SessionWrapper,
+        _ctx: &mut Self::CTX,
+    ) -> Result<RequestFilterResult, Box<Error>> {
+        Ok(RequestFilterResult::Unhandled)
+    }
 
     /// Called after `request_filter` was called for all handlers and a result was produced. This
     /// allows the handler to perform some post-processing.

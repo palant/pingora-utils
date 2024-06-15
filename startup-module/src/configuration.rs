@@ -320,9 +320,11 @@ impl StartupConf {
         let tls_callbacks = self.tls.into_accept_callbacks();
         let mut proxy = http_proxy_service(&server.configuration, app);
         for addr in listen {
-            let socket_options = addr
-                .ipv6_only
-                .map(|ipv6_only| TcpSocketOptions { ipv6_only });
+            let socket_options = addr.ipv6_only.map(|ipv6_only| {
+                let mut options = TcpSocketOptions::default();
+                options.ipv6_only = ipv6_only;
+                options
+            });
 
             if addr.tls {
                 let callbacks = if let Ok(callbacks) = &tls_callbacks {

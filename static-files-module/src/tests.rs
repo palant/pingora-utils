@@ -18,7 +18,9 @@ use crate::metadata::Metadata;
 
 use const_format::{concatcp, str_repeat};
 use http::status::StatusCode;
-use module_utils::pingora::{Error, RequestHeader, SessionWrapper, TestSession};
+use module_utils::pingora::{
+    Error, RequestHeader, ResponseCompression, SessionWrapper, TestSession,
+};
 use module_utils::standard_response::response_text;
 use module_utils::{FromYaml, RequestFilter, RequestFilterResult};
 use std::path::PathBuf;
@@ -58,6 +60,16 @@ async fn make_session(method: &str, path: &str) -> TestSession {
     TestSession::from(header).await
 }
 
+async fn make_session_with_compression(method: &str, path: &str) -> TestSession {
+    let mut session = make_session(method, path).await;
+    session
+        .downstream_modules_ctx
+        .get_mut::<ResponseCompression>()
+        .unwrap()
+        .adjust_level(3);
+    session
+}
+
 fn assert_status(session: &TestSession, expected: u16) {
     assert_eq!(
         session.response_written().unwrap().status.as_u16(),
@@ -90,6 +102,7 @@ fn assert_headers(session: &TestSession, expected: Vec<(&str, &str)>) {
 }
 
 fn assert_body(session: &TestSession, expected: &str) {
+    assert!(session.end_of_stream);
     assert_eq!(
         String::from_utf8_lossy(&session.response_body).as_ref(),
         expected
@@ -106,7 +119,7 @@ async fn unconfigured() -> Result<(), Box<Error>> {
         RequestFilterResult::Unhandled
     );
     assert!(session.response_written().is_none());
-    assert_body(&session, "");
+    assert!(session.response_body.is_empty());
 
     Ok(())
 }
@@ -664,11 +677,10 @@ async fn if_none_match() -> Result<(), Box<Error>> {
     assert_body(&session, "Hi!\n");
 
     // With compression enabled this should produce Vary header
-    let mut session = make_session("GET", "/file.txt").await;
+    let mut session = make_session_with_compression("GET", "/file.txt").await;
     session
         .req_header_mut()
         .insert_header("If-None-Match", &meta.etag)?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -798,11 +810,10 @@ async fn if_match() -> Result<(), Box<Error>> {
     assert_body(&session, "");
 
     // With compression enabled this should produce Vary header
-    let mut session = make_session("GET", "/file.txt").await;
+    let mut session = make_session_with_compression("GET", "/file.txt").await;
     session
         .req_header_mut()
         .insert_header("If-Match", "\"xyz\"")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -892,11 +903,10 @@ async fn if_modified_since() -> Result<(), Box<Error>> {
     assert_body(&session, "Hi!\n");
 
     // With compression enabled this should produce Vary header
-    let mut session = make_session("GET", "/file.txt").await;
+    let mut session = make_session_with_compression("GET", "/file.txt").await;
     session
         .req_header_mut()
         .insert_header("If-Modified-Since", meta.modified.as_ref().unwrap())?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -984,14 +994,13 @@ async fn if_unmodified_since() -> Result<(), Box<Error>> {
     assert_body(&session, "");
 
     // With compression enabled this should produce Vary header
-    let mut session = make_session("GET", "/file.txt").await;
+    let mut session = make_session_with_compression("GET", "/file.txt").await;
     session
         .req_header_mut()
         .insert_header("If-Unmodified-Since", meta.modified.as_ref().unwrap())?;
     session
         .req_header_mut()
         .insert_header("If-Match", "\"xyz\"")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -1099,11 +1108,10 @@ async fn ranged_request() -> Result<(), Box<Error>> {
     assert_body(&session, "");
 
     // With compression enabled this should produce Vary header
-    let mut session = make_session("GET", "/large.txt").await;
+    let mut session = make_session_with_compression("GET", "/large.txt").await;
     session
         .req_header_mut()
         .insert_header("Range", "bytes=200000-")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -1129,11 +1137,10 @@ async fn dynamic_compression() -> Result<(), Box<Error>> {
     let handler = make_handler(default_conf());
 
     // Regular request should result in compressed response
-    let mut session = make_session("GET", "/large.txt").await;
+    let mut session = make_session_with_compression("GET", "/large.txt").await;
     session
         .req_header_mut()
         .insert_header("Accept-Encoding", "gzip")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -1153,11 +1160,10 @@ async fn dynamic_compression() -> Result<(), Box<Error>> {
     );
 
     // Request without matching encodings should result in uncompressed response
-    let mut session = make_session("GET", "/large.txt").await;
+    let mut session = make_session_with_compression("GET", "/large.txt").await;
     session
         .req_header_mut()
         .insert_header("Accept-Encoding", "unsupported")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent
@@ -1176,14 +1182,13 @@ async fn dynamic_compression() -> Result<(), Box<Error>> {
     );
 
     // Ranged response should be uncompressed
-    let mut session = make_session("GET", "/large.txt").await;
+    let mut session = make_session_with_compression("GET", "/large.txt").await;
     session
         .req_header_mut()
         .insert_header("Accept-Encoding", "gzip")?;
     session
         .req_header_mut()
         .insert_header("Range", "bytes=0-10000")?;
-    session.downstream_compression.adjust_level(3);
     assert_eq!(
         handler.request_filter(&mut session, &mut ()).await?,
         RequestFilterResult::ResponseSent

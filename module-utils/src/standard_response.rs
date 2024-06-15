@@ -61,10 +61,12 @@ async fn response(
     if let Some(cookie) = cookie {
         header.append_header(header::SET_COOKIE, cookie)?;
     }
-    session.write_response_header(Box::new(header)).await?;
 
-    if session.req_header().method != Method::HEAD {
-        session.write_response_body(text.into()).await?;
+    let is_head = session.req_header().method == Method::HEAD;
+    session.write_response_header(Box::new(header), is_head).await?;
+
+    if !is_head {
+        session.write_response_body(Some(text.into()), true).await?;
     }
 
     Ok(())

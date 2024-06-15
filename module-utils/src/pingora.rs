@@ -19,6 +19,9 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::{header, Extensions};
 pub use pingora::http::{IntoCaseHeaderName, RequestHeader, ResponseHeader};
+pub use pingora::modules::http::compression::ResponseCompression;
+use pingora::modules::http::compression::ResponseCompressionBuilder;
+use pingora::modules::http::HttpModules;
 pub use pingora::protocols::http::HttpTask;
 pub use pingora::protocols::l4::socket::SocketAddr;
 pub use pingora::proxy::{http_proxy_service, ProxyHttp, Session};
@@ -93,13 +96,28 @@ pub trait SessionWrapper: Send + Deref<Target = Session> + DerefMut {
     fn extensions_mut(&mut self) -> &mut Extensions;
 
     /// See [`Session::write_response_header`](pingora::protocols::http::server::Session::write_response_header)
-    async fn write_response_header(&mut self, resp: Box<ResponseHeader>) -> Result<(), Box<Error>> {
-        self.deref_mut().write_response_header(resp).await
+    async fn write_response_header(
+        &mut self,
+        resp: Box<ResponseHeader>,
+        end_of_stream: bool,
+    ) -> Result<(), Box<Error>> {
+        self.deref_mut()
+            .write_response_header(resp, end_of_stream)
+            .await
     }
 
     /// See [`Session::write_response_header_ref`](pingora::protocols::http::server::Session::write_response_header_ref)
-    async fn write_response_header_ref(&mut self, resp: &ResponseHeader) -> Result<(), Box<Error>> {
-        self.deref_mut().write_response_header_ref(resp).await
+    #[deprecated(
+        note = "Please use write_response_header for now, see https://github.com/cloudflare/pingora/issues/206#issuecomment-2168764571"
+    )]
+    async fn write_response_header_ref(
+        &mut self,
+        _resp: &ResponseHeader,
+    ) -> Result<(), Box<Error>> {
+        // Looks like this cannot currently be made to work correctly, we don’t know whether this
+        // is the end of the stream. See:
+        // https://github.com/cloudflare/pingora/issues/206#issuecomment-2168764571
+        panic!("Please use write_response_header, write_response_header_ref won't work correctly");
     }
 
     /// See [`Session::response_written`](pingora::protocols::http::server::Session::response_written)
@@ -108,8 +126,14 @@ pub trait SessionWrapper: Send + Deref<Target = Session> + DerefMut {
     }
 
     /// See [`Session::write_response_body`](pingora::protocols::http::server::Session::write_response_body)
-    async fn write_response_body(&mut self, data: Bytes) -> Result<(), Box<Error>> {
-        self.deref_mut().write_response_body(data).await
+    async fn write_response_body(
+        &mut self,
+        body: Option<Bytes>,
+        end_of_stream: bool,
+    ) -> Result<(), Box<Error>> {
+        self.deref_mut()
+            .write_response_body(body, end_of_stream)
+            .await
     }
 }
 
@@ -149,14 +173,13 @@ where
     async fn write_response_header(
         &mut self,
         mut resp: Box<ResponseHeader>,
+        end_of_stream: bool,
     ) -> Result<(), Box<Error>> {
         self.handler.response_filter(self, &mut resp, None);
 
-        self.deref_mut().write_response_header(resp).await
-    }
-
-    async fn write_response_header_ref(&mut self, resp: &ResponseHeader) -> Result<(), Box<Error>> {
-        self.write_response_header(Box::new(resp.clone())).await
+        self.deref_mut()
+            .write_response_header(resp, end_of_stream)
+            .await
     }
 }
 
@@ -190,6 +213,9 @@ pub struct TestSession {
     inner: Session,
     extensions: Extensions,
 
+    /// Set to `true` if end of the response body was sent
+    pub end_of_stream: bool,
+
     /// The response header written if any
     pub response_header: Option<ResponseHeader>,
 
@@ -214,13 +240,17 @@ impl TestSession {
 
         let _ = header.insert_header(header::CONTENT_LENGTH, body.as_ref().len());
 
-        let mut inner = Session::new_h1(Box::new(cursor));
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+
+        let mut inner = Session::new_h1_with_modules(Box::new(cursor), &modules);
         assert!(inner.read_request().await.unwrap());
         *inner.req_header_mut() = header;
 
         Self {
             inner,
             extensions: Extensions::new(),
+            end_of_stream: false,
             response_header: None,
             response_body: BytesMut::new(),
         }
@@ -237,21 +267,38 @@ impl SessionWrapper for TestSession {
         &mut self.extensions
     }
 
-    async fn write_response_header(&mut self, resp: Box<ResponseHeader>) -> Result<(), Box<Error>> {
+    async fn write_response_header(
+        &mut self,
+        resp: Box<ResponseHeader>,
+        end_of_stream: bool,
+    ) -> Result<(), Box<Error>> {
+        if self.response_header.is_some() {
+            panic!("Trying to send a response header twice");
+        }
+        if self.end_of_stream {
+            panic!("Trying to send a response header after end of stream");
+        }
+        self.end_of_stream = end_of_stream;
         self.response_header = Some(*resp);
         Ok(())
-    }
-
-    async fn write_response_header_ref(&mut self, resp: &ResponseHeader) -> Result<(), Box<Error>> {
-        self.write_response_header(Box::new(resp.clone())).await
     }
 
     fn response_written(&self) -> Option<&ResponseHeader> {
         self.response_header.as_ref()
     }
 
-    async fn write_response_body(&mut self, data: Bytes) -> Result<(), Box<Error>> {
-        self.response_body.extend(std::iter::once(data));
+    async fn write_response_body(
+        &mut self,
+        body: Option<Bytes>,
+        end_of_stream: bool,
+    ) -> Result<(), Box<Error>> {
+        if self.end_of_stream {
+            panic!("Trying to write response body after end of stream");
+        }
+        self.end_of_stream = end_of_stream;
+        if let Some(body) = body {
+            self.response_body.extend(std::iter::once(body));
+        }
         Ok(())
     }
 }

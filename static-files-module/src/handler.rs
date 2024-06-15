@@ -174,7 +174,7 @@ impl RequestFilter for StaticFilesHandler {
             debug!("If-Match/If-Unmodified-Since precondition failed");
             let header = meta.to_custom_header(StatusCode::PRECONDITION_FAILED)?;
             let header = compression.transform_header(session, header)?;
-            session.write_response_header(header).await?;
+            session.write_response_header(header, true).await?;
             return Ok(RequestFilterResult::ResponseSent);
         }
 
@@ -182,7 +182,7 @@ impl RequestFilter for StaticFilesHandler {
             debug!("If-None-Match/If-Modified-Since check resulted in Not Modified");
             let header = meta.to_custom_header(StatusCode::NOT_MODIFIED)?;
             let header = compression.transform_header(session, header)?;
-            session.write_response_header(header).await?;
+            session.write_response_header(header, true).await?;
             return Ok(RequestFilterResult::ResponseSent);
         }
 
@@ -197,7 +197,7 @@ impl RequestFilter for StaticFilesHandler {
                 debug!("requested bytes range is out of bounds");
                 let header = meta.to_custom_header(StatusCode::RANGE_NOT_SATISFIABLE)?;
                 let header = compression.transform_header(session, header)?;
-                session.write_response_header(header).await?;
+                session.write_response_header(header, true).await?;
                 return Ok(RequestFilterResult::ResponseSent);
             }
             None => {
@@ -212,12 +212,12 @@ impl RequestFilter for StaticFilesHandler {
             header.set_status(StatusCode::NOT_FOUND)?;
         }
 
-        session.write_response_header(header).await?;
-
-        if session.req_header().method == Method::GET {
+        let is_head = session.req_header().method == Method::HEAD;
+        session.write_response_header(header, is_head).await?;
+        if !is_head {
             // sendfile would be nice but not currently possible within pingora-proxy (see
             // https://github.com/cloudflare/pingora/issues/160)
-            file_response(session, &path, start, end, &compression).await?;
+            file_response(session, &path, start, end).await?;
         }
         Ok(RequestFilterResult::ResponseSent)
     }
