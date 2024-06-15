@@ -85,7 +85,7 @@ impl<'a> Compression<'a> {
         if let Some(algorithm) = self.precompressed_active {
             // File is pre-compressed, only need to adjust header
             header.insert_header(header::CONTENT_ENCODING, algorithm.name())?;
-        } else if self.dynamic {
+        } else if header.headers.get(header::CONTENT_ENCODING).is_some() {
             // Response is compressed dynamically, no support for ranged requests.
             // Ideally, pingora should do this: https://github.com/cloudflare/pingora/issues/229
             header.insert_header(header::ACCEPT_RANGES, "none")?;
